@@ -1,0 +1,70 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: 'Flutter stable version (leave empty for 3.41.5)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter_version != '' && inputs.flutter_version || '3.41.5' }}
+          channel: stable
+          cache: true
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Resolve Dart dependencies
+        run: flutter pub get
+
+      - name: Install CocoaPods dependencies
+        run: |
+          cd ios
+          pod install --repo-update
+
+      # --no-codesign 让 Flutter 只产出 .app，不碰证书；
+      # 生成的 IPA 未签名，后续用 Sideloadly / AltStore 以你的 Apple ID 签名安装。
+      - name: Build iOS release without code signing
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          set -eux
+          APP=build/ios/iphoneos/Runner.app
+          test -d "$APP"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry wenku8-unsigned.ipa Payload
+          unzip -l wenku8-unsigned.ipa | head -n 20
+          ls -lh wenku8-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wenku8-unsigned-ipa
+          path: wenku8-unsigned.ipa
+          retention-days: 14
+          if-no-files-found: error

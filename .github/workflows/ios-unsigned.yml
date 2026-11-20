@@ -7,9 +7,15 @@ on:
         description: 'Flutter stable version (leave empty for 3.41.5)'
         required: false
         default: ''
+      publish_only:
+        description: 'Only publish the existing artifact to a Release (skip build)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 concurrency:
   group: ios-unsigned-${{ github.ref }}
@@ -17,6 +23,7 @@ concurrency:
 
 jobs:
   build-ios:
+    if: ${{ !inputs.publish_only }}
     runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
@@ -44,8 +51,6 @@ jobs:
           cd ios
           pod install --repo-update
 
-      # --no-codesign 让 Flutter 只产出 .app，不碰证书；
-      # 生成的 IPA 未签名，后续用 Sideloadly / AltStore 以你的 Apple ID 签名安装。
       - name: Build iOS release without code signing
         run: flutter build ios --release --no-codesign
 
@@ -68,3 +73,24 @@ jobs:
           path: wenku8-unsigned.ipa
           retention-days: 14
           if-no-files-found: error
+
+  publish:
+    if: ${{ inputs.publish_only }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download IPA artifact from earlier run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          gh run download 44760911467 --repo "$GITHUB_REPOSITORY" --name wenku8-unsigned-ipa --dir out
+          ls -la out
+
+      - name: Publish release with IPA
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ipa-0.4.1
+          name: Wenku8 Flutter 0.4.1 unsigned IPA
+          body: Unsigned iOS IPA built by GitHub Actions. Sign it with Sideloadly / AltStore using your own Apple ID.
+          files: out/*.ipa
